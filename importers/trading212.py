@@ -1,31 +1,27 @@
 from pathlib import Path
-import csv
-import hashlib
 from decimal import Decimal
 from datetime import datetime
 
 import duckdb
 
-ACCOUNT_ID = 1
-BROKER_NAME = "Trading 212"
-BASE_CURRENCY = "EUR"
+from importers.common import (
+    hashed_source_id,
+    print_account_summary,
+    read_csv_rows,
+    save_transactions,
+    to_decimal,
+    unique_by_source_id,
+)
+from init_db import DATABASE_FILE
+
+ACCOUNT = {
+    "account_id": 1,
+    "broker_name": "Trading 212",
+    "base_currency": "EUR",
+}
 
 project_root = Path(__file__).parent.parent
 csv_folder = project_root / "data" / "raw" / "trading212"
-database_file = project_root / "data" / "arca.duckdb"
-
-
-def read_rows(folder):
-    rows = []
-    for path in sorted(folder.glob("*.csv")):
-        with open(path, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                rows.append((path.name, row))
-    return rows
-
-
-def to_decimal(value):
-    return Decimal(value) if value else None
 
 
 def parse_row(row, source_file):
@@ -57,20 +53,30 @@ def make_source_id(row):
     if row["id"]:
         return f"t212:{row['id']}"
 
-    key = f"{row['action']}|{row['timestamp'].isoformat()}|{row['isin']}|{row['total']}"
-    return f"t212:{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+    return hashed_source_id(
+        "t212", row["action"], row["timestamp"].isoformat(), row["isin"], row["total"]
+    )
 
 
 def load_rows(folder=csv_folder):
     typed_rows = []
-    for source_file, raw in read_rows(folder):
+    for source_file, raw in read_csv_rows(folder):
         row = parse_row(raw, source_file)
         row["source_id"] = make_source_id(row)
         typed_rows.append(row)
 
-    unique_rows = list({row["source_id"]: row for row in typed_rows}.values())
+    unique_rows = unique_by_source_id(typed_rows)
     unique_rows.sort(key=lambda x: x["timestamp"])
     return unique_rows
+
+
+def make_instrument(row):
+    return {
+        "isin": row["isin"],
+        "name": row["name"],
+        "currency": row["price_currency"],
+        "asset_type": "etf",
+    }
 
 
 def convert_row(row):
@@ -89,11 +95,7 @@ def convert_row(row):
     elif row["action"] == "Market buy":
         fee = row["conversion_fee"] or Decimal("0")
         tx_type = "buy"
-        instrument = {
-            "isin": row["isin"],
-            "name": row["name"],
-            "currency": row["price_currency"],
-        }
+        instrument = make_instrument(row)
         legs.extend([
             {
                 "role": "shares",
@@ -120,11 +122,7 @@ def convert_row(row):
         if row["withholding_tax"]:
             raise ValueError(f"Withholding tax not handled yet: {row['source_id']}")
         tx_type = "dividend"
-        instrument = {
-            "isin": row["isin"],
-            "name": row["name"],
-            "currency": row["price_currency"],
-        }
+        instrument = make_instrument(row)
         legs.append(
             {
                 "role": "income",
@@ -147,118 +145,10 @@ def convert_row(row):
     }
 
 
-def get_instrument(connection, instrument):
-    if not instrument or not instrument["isin"]:
-        return None
-
-    found = connection.execute(
-        "SELECT instrument_id FROM instruments WHERE isin = ?",
-        [instrument["isin"]],
-    ).fetchone()
-    if found:
-        return found[0]
-
-    new_id = connection.execute(
-        "SELECT COALESCE(MAX(instrument_id), 0) + 1 FROM instruments"
-    ).fetchone()[0]
-    connection.execute(
-        """
-        INSERT INTO instruments (instrument_id, isin, name, asset_type, currency)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        [new_id, instrument["isin"], instrument["name"], "etf", instrument["currency"]],
-    )
-    return new_id
-
-
-def save_transactions(connection, transactions):
-    connection.execute(
-        """
-        INSERT INTO accounts (account_id, broker_name, base_currency)
-        VALUES (?, ?, ?)
-        ON CONFLICT DO NOTHING
-        """,
-        [ACCOUNT_ID, BROKER_NAME, BASE_CURRENCY],
-    )
-
-    connection.execute(
-        """
-        DELETE FROM transaction_legs WHERE transaction_id IN
-            (SELECT transaction_id FROM transactions WHERE account_id = ?)
-        """,
-        [ACCOUNT_ID],
-    )
-    connection.execute(
-        "DELETE FROM transactions WHERE account_id = ?",
-        [ACCOUNT_ID],
-    )
-
-    next_id = connection.execute(
-        "SELECT COALESCE(MAX(transaction_id), 0) + 1 FROM transactions"
-    ).fetchone()[0]
-
-    for tx_id, tx in enumerate(transactions, start=next_id):
-        connection.execute(
-            """
-            INSERT INTO transactions (transaction_id, account_id, instrument_id, type, event_date)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            [
-                tx_id,
-                ACCOUNT_ID,
-                get_instrument(connection, tx["instrument"]),
-                tx["type"],
-                tx["event_date"],
-            ],
-        )
-        for leg_number, leg in enumerate(tx["legs"], start=1):
-            connection.execute(
-                """
-                INSERT INTO transaction_legs (
-                    transaction_id, leg_number, role, amount, currency,
-                    instrument_id, unit_price, price_currency,
-                    source_file, source_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    tx_id,
-                    leg_number,
-                    leg["role"],
-                    leg["amount"],
-                    leg.get("currency"),
-                    get_instrument(connection, leg.get("instrument")),
-                    leg.get("unit_price"),
-                    leg.get("price_currency"),
-                    tx["source_file"],
-                    tx["source_id"],
-                ],
-            )
-
-
 if __name__ == "__main__":
     transactions = [convert_row(row) for row in load_rows()]
 
-    with duckdb.connect(str(database_file)) as connection:
-        save_transactions(connection, transactions)
-
+    with duckdb.connect(str(DATABASE_FILE)) as connection:
+        save_transactions(connection, ACCOUNT, transactions)
         print(f"Saved {len(transactions)} transactions\n")
-        print("Holdings:")
-        for isin, name, quantity in connection.execute(
-            """
-            SELECT i.isin, i.name, h.quantity
-            FROM holdings h
-            JOIN instruments i ON i.instrument_id = h.instrument_id
-            WHERE h.account_id = ?
-            ORDER BY i.isin
-            """,
-            [ACCOUNT_ID],
-        ).fetchall():
-            print(f"  {isin}  {name}: {quantity}")
-
-        print("Cash:")
-        for currency, balance in connection.execute(
-            "SELECT currency, balance FROM cash_balances WHERE account_id = ?",
-            [ACCOUNT_ID],
-        ).fetchall():
-            print(f"  {currency}: {balance}")
+        print_account_summary(connection, ACCOUNT["account_id"])
