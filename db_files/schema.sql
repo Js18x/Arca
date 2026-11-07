@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS instruments (
 CREATE TABLE IF NOT EXISTS transactions (
   transaction_id INTEGER,
   account_id INTEGER NOT NULL REFERENCES accounts(account_id),
+  instrument_id INTEGER REFERENCES instruments(instrument_id),
   type VARCHAR(255) NOT NULL,
   event_date DATE NOT NULL,
   settle_date DATE,
