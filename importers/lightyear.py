@@ -222,10 +222,15 @@ def convert_group(rows):
     }
 
 
-if __name__ == "__main__":
+def run(connection):
+    """Rebuild this account from its CSV files and return how many transactions were saved."""
     transactions = [convert_group(rows) for rows in group_by_reference(load_rows())]
+    save_transactions(connection, ACCOUNT, transactions)
+    return len(transactions)
 
+
+if __name__ == "__main__":
     with duckdb.connect(str(DATABASE_FILE)) as connection:
-        save_transactions(connection, ACCOUNT, transactions)
-        print(f"Saved {len(transactions)} transactions\n")
+        count = run(connection)
+        print(f"Saved {count} transactions\n")
         print_account_summary(connection, ACCOUNT["account_id"])

@@ -72,3 +72,13 @@ CREATE TABLE IF NOT EXISTS fx_rates (
 
   PRIMARY KEY (date, base_currency, quote_currency)
 );
+
+CREATE TABLE IF NOT EXISTS import_runs (
+  broker VARCHAR(255),
+  files_fingerprint VARCHAR(64) NOT NULL,
+  code_fingerprint VARCHAR(64) NOT NULL,
+  transaction_count INTEGER NOT NULL,
+  imported_at TIMESTAMP NOT NULL,
+
+  PRIMARY KEY (broker)
+);

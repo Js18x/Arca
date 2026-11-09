@@ -17,6 +17,7 @@ def test_schema_tables_exist():
         "transaction_legs",
         "prices",
         "fx_rates",
+        "import_runs",
         "cash_balances",
         "holdings",
         "transaction_summary",
