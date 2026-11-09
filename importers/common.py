@@ -113,8 +113,11 @@ def save_transactions(connection, account, transactions):
     for tx_id, tx in enumerate(transactions, start=next_id):
         connection.execute(
             """
-            INSERT INTO transactions (transaction_id, account_id, instrument_id, type, event_date)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO transactions (
+                transaction_id, account_id, instrument_id, type, event_date,
+                group_ref, is_reinvestment
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 tx_id,
@@ -122,6 +125,8 @@ def save_transactions(connection, account, transactions):
                 get_instrument(connection, tx["instrument"]),
                 tx["type"],
                 tx["event_date"],
+                tx.get("group_ref"),
+                tx.get("is_reinvestment", False),
             ],
         )
         for leg_number, leg in enumerate(tx["legs"], start=1):
@@ -143,8 +148,8 @@ def save_transactions(connection, account, transactions):
                     get_instrument(connection, leg.get("instrument")),
                     leg.get("unit_price"),
                     leg.get("price_currency"),
-                    tx["source_file"],
-                    tx["source_id"],
+                    leg.get("source_file", tx["source_file"]),
+                    leg.get("source_id", tx["source_id"]),
                 ],
             )
 
