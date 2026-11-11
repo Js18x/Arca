@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 import duckdb
+import pytest
 
 from importers.common import hashed_source_id, save_transactions, unique_by_source_id
 from init_db import apply_sql_files
@@ -82,3 +83,45 @@ def test_hashed_source_id_is_stable():
 def test_unique_by_source_id_drops_repeats():
     rows = [{"source_id": "a"}, {"source_id": "b"}, {"source_id": "a"}]
     assert [row["source_id"] for row in unique_by_source_id(rows)] == ["a", "b"]
+
+
+def test_failed_save_keeps_the_accounts_old_data():
+    connection = duckdb.connect(database=":memory:")
+    apply_sql_files(connection)
+    save_transactions(connection, ACCOUNT, TRANSACTIONS)
+
+    # A leg with both a currency and an instrument breaks the table's CHECK rule,
+    # so the insert fails after the old rows have already been deleted.
+    bad = [
+        {
+            **TRANSACTIONS[0],
+            "legs": [
+                {"role": "deposit", "amount": Decimal("1"), "currency": "EUR", "instrument": INSTRUMENT}
+            ],
+        }
+    ]
+    with pytest.raises(duckdb.ConstraintException):
+        save_transactions(connection, ACCOUNT, bad)
+
+    assert connection.execute(
+        "SELECT (SELECT COUNT(*) FROM transactions), (SELECT COUNT(*) FROM transaction_legs)"
+    ).fetchone() == (2, 3)
+    assert connection.execute("SELECT balance FROM cash_balances").fetchall() == [
+        (Decimal("10.0000000000"),)
+    ]
+    connection.close()
+
+
+def test_orphan_legs_are_rejected():
+    connection = duckdb.connect(database=":memory:")
+    apply_sql_files(connection)
+    connection.execute(
+        """
+        INSERT INTO transaction_legs (transaction_id, leg_number, role, amount, currency, source_file, source_id)
+        VALUES (999, 1, 'deposit', 1, 'EUR', 'x.csv', 'x:1')
+        """
+    )
+
+    with pytest.raises(ValueError, match="missing transaction"):
+        save_transactions(connection, ACCOUNT, TRANSACTIONS)
+    connection.close()

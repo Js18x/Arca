@@ -24,3 +24,10 @@ re-run.
 ## transactions.instrument_id
 A dividend's income leg is cash, so it can't hold an instrument. This nullable
 column records which security a buy or dividend is about.
+## No foreign key from transaction_legs to transactions
+Each import replaces an account's data inside one database transaction, so a
+failed import leaves the old data untouched instead of half an account. DuckDB
+can't delete rows that a foreign key points to in the same transaction as the
+rows pointing to them, so the import would always fail with the key in place.
+`save_transactions` checks for legs without a transaction before committing
+instead, and it's the only code that writes legs.

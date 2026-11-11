@@ -79,10 +79,36 @@ def get_instrument(connection, instrument):
 
 
 def save_transactions(connection, account, transactions):
-    """Replace all of an account's transactions with the ones given.
+    """Replace all of an account's transactions with the ones given, all or nothing.
 
-    `account` is a dict with account_id, broker_name and base_currency.
+    `account` is a dict with account_id, broker_name and base_currency. If any
+    step fails, everything is rolled back and the account keeps its old data.
     """
+    connection.begin()
+    try:
+        _replace_transactions(connection, account, transactions)
+        _check_no_orphan_legs(connection)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def _check_no_orphan_legs(connection):
+    """Stand-in for the foreign key DuckDB can't have here (see docs/decisions.md)."""
+    orphans = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM transaction_legs l
+        LEFT JOIN transactions t ON t.transaction_id = l.transaction_id
+        WHERE t.transaction_id IS NULL
+        """
+    ).fetchone()[0]
+    if orphans:
+        raise ValueError(f"{orphans} transaction legs point to a missing transaction")
+
+
+def _replace_transactions(connection, account, transactions):
     account_id = account["account_id"]
 
     connection.execute(

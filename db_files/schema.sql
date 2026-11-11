@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 );  
 
 CREATE TABLE IF NOT EXISTS transaction_legs (
-  transaction_id INTEGER NOT NULL REFERENCES transactions(transaction_id),
+  transaction_id INTEGER NOT NULL,  -- no REFERENCES: see docs/decisions.md
   leg_number INTEGER NOT NULL,
   role VARCHAR(255) NOT NULL,
   amount DECIMAL(18, 10) NOT NULL,
