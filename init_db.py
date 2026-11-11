@@ -10,10 +10,7 @@ DATABASE_FILE = DATABASE_DIR / "arca.duckdb"
 
 
 def apply_sql_files(connection: duckdb.DuckDBPyConnection) -> None:
-    sql_files = sorted(
-        DB_FILES_DIR.glob("*.sql"),
-        key=lambda path: (path.name != "schema.sql", path.name),
-    )
+    sql_files = sorted(DB_FILES_DIR.glob("*.sql"))
     for sql_file in sql_files:
         connection.execute(sql_file.read_text(encoding="utf-8"))
 
