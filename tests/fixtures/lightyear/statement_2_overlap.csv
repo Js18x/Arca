@@ -1,0 +1,4 @@
+"Date","Reference","Ticker","ISIN","Type","Quantity","CCY","Price/share","Gross Amount","FX Rate","Fee","Net Amt.","Tax Amt."
+"02/01/2025 09:00:00","DT-TEST0001","","","Deposit","","EUR","","100.00","","0.60","100.00",""
+"03/01/2025 10:00:00","CN-TEST0001","","","Conversion","","USD","","57.00","1.14","","57.00",""
+"03/01/2025 10:00:00","CN-TEST0001","","","Conversion","","EUR","","-50.00","1.14","0.20","-49.80",""

@@ -1,0 +1,4 @@
+Action,Time (UTC),ISIN,Ticker,Name,Notes,ID,No. of shares,Price / share,Currency (Price / share),Exchange rate,Total,Currency (Total),Withholding tax,Currency (Withholding tax),Currency conversion fee,Currency (Currency conversion fee)
+Deposit,2025-01-02 09:00:00+00:00,,,,,DEP-0001,,,,,500.00,EUR,,,,
+Market buy,2025-01-03 10:00:00+00:00,IE0000000001,TEST,Test World ETF (Acc),,BUY-0001,2.0000000000,100.0000000000,USD,1.10000000,182.00,EUR,,,0.15,EUR
+Dividend (Dividend),2025-03-01 12:00:00+00:00,IE0000000001,TEST,Test World ETF (Acc),,,2.0000000000,0.660000,USD,1.10000000,1.20,EUR,0.00,USD,,
