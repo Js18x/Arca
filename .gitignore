@@ -221,4 +221,4 @@ __marimo__/
 
 data/
 *.duckdb
-.arca_env/
+.arca_env/scratch*
