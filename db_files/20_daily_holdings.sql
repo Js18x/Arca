@@ -27,7 +27,7 @@ all_days AS (
   SELECT
     p.account_id,
     p.instrument_id,
-    CAST(d.day AS DATE) AS date,
+    CAST(d.day AS DATE) AS date
   FROM positions p,
   generate_series(p.first_event_date, CURRENT_DATE, INTERVAL '1 day') AS d(day)
 )
