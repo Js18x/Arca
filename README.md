@@ -37,7 +37,7 @@ is a single source of truth. Each importer is checked against the app's own bala
 
 Market data is added on top of the ledger: daily exchange rates from the European
 Central Bank and daily prices from Yahoo Finance, so every position can be valued
-in euros.
+in euros on every day.
 
 ```text
 broker exports ──► importers/ ──► transactions + legs ─┐
@@ -54,14 +54,15 @@ exchange rates, prices ──► market_data/ ───────────�
 | IBKR importer                 | Done        |
 | Exchange rates (ECB)          | Done        |
 | Daily prices (Yahoo Finance)  | Done        |
-| Valuation over time           | In progress |
+| Valuation over time           | Done        |
+| Analysis functions            | Next        |
 | Dashboard                     | Planned     |
-| Analysis and data science     | Planned     |
+| Data science                  | Planned     |
 
 ## Project structure
 
 ```text
-db_files/           schema and views, applied in order by init_db.py
+db_files/           schema and views, applied in name order by init_db.py
 importers/          one importer per broker, plus shared helpers in common.py
 market_data/        exchange rates (fx.py) and prices (prices.py)
 reference/          example of the instrument reference file
@@ -69,6 +70,7 @@ tests/              tests and made-up sample exports in tests/fixtures/
 docs/decisions.md   design decisions and why I made them
 init_db.py          creates the database
 run_imports.py      runs every importer
+update_all.py       runs the importers, then updates exchange rates and prices
 data/               your exports, reference file and database (not in Git)
 ```
 
@@ -91,53 +93,74 @@ a security trades on, so this mapping is done by hand.
 
 ## Usage
 
-Run everything from the project folder, in this order.
+Run everything from the project folder.
 
-### 1. Import your transactions
+### Add your exports
 
 Export your history as CSV from each app and put the files in the broker's folder.
 Exports often cover up to one year, so you may need several files.
 
-| Broker      | Export                                   | Folder                                            |
-|-------------|------------------------------------------|---------------------------------------------------|
-| Trading 212 | History → Export (CSV)                   | `data/raw/trading212/`                            |
-| Lightyear   | Account statement (CSV)                  | `data/raw/lightyear/`                             |
+| Broker      | Export                                            | Folder                                            |
+|-------------|---------------------------------------------------|---------------------------------------------------|
+| Trading 212 | History → Export (CSV)                            | `data/raw/trading212/`                            |
+| Lightyear   | Account statement (CSV)                           | `data/raw/lightyear/`                             |
 | IBKR        | Two Flex Queries: Trades, Cash Transactions (CSV) | `data/raw/ibkr/trades/` and `data/raw/ibkr/cash/` |
 
-Then run:
+### Update everything
 
-    python run_imports.py
+    python update_all.py
 
-This creates the database if needed and imports only the brokers whose files or
-importer code changed since the last import.
+This imports any brokers whose files or importer code changed, then updates
+exchange rates and prices up to today. It creates the database if needed.
 
-| Option    | What it does                                     |
-|-----------|--------------------------------------------------|
-| `--force` | Re-import every broker                           |
-| `--watch` | Keep running and import new files as they arrive |
+| Option      | What it does                                                  |
+|-------------|---------------------------------------------------------------|
+| `--offline` | Rebuild exchange rates and prices from the cache, no download |
+| `--force`   | Re-import every broker, changed or not                        |
+
+### Run one step on its own
+
+| Step           | Command                         | Notes                                              |
+|----------------|---------------------------------|----------------------------------------------------|
+| Imports        | `python run_imports.py`         | `--watch` keeps running and imports new files      |
+| One importer   | `python -m importers.trading212` | Also `importers.lightyear` and `importers.ibkr`   |
+| Exchange rates | `python -m market_data.fx`      | ECB rates from [Frankfurter](https://frankfurter.dev) |
+| Prices         | `python -m market_data.prices`  | Applies the reference file first                   |
 
 Each import rebuilds that broker's data from all its files, so overlapping exports
-don't create duplicates. You can also run one importer on its own, for example
-`python -m importers.trading212`. Importers run as modules (`-m`) so they can share
-code in `importers/common.py`.
+don't create duplicates. Importers and market data scripts run as modules (`-m`) so
+they can share code.
 
-### 2. Update exchange rates
+The prices script warns if Yahoo's price on your first buy date is far from what you
+actually paid, which usually means a wrong ticker or a price quoted in pence. Both
+market data scripts cache what they download in `data/raw/` and accept `--offline`.
 
-    python -m market_data.fx
+## What's in the database
 
-Downloads daily ECB rates from [Frankfurter](https://frankfurter.dev) for every
-currency in your ledger, from your first transaction until today.
+The database is `data/arca.duckdb`. These views can be queried like tables, and every
+one keeps `account_id`, so any combination of accounts can be selected.
 
-### 3. Update prices
+| View                          | What it gives                                                        |
+|-------------------------------|----------------------------------------------------------------------|
+| `holdings`, `cash_balances`   | Current shares and cash per account                                  |
+| `daily_holdings`, `daily_cash` | Shares and cash per account on every day                            |
+| `daily_prices`, `daily_fx`    | The latest price and EUR exchange rate on every day                  |
+| `daily_valuation`             | The value in EUR of every position and cash balance, per account and day |
+| `holding_changes`             | Every buy, sell and reinvestment, with its value                     |
+| `transaction_summary`         | One row per transaction                                              |
 
-    python -m market_data.prices
+Markets and the ECB don't publish every day, so weekends and holidays use the latest
+available price and rate. `price_date` and `rate_date` show which day they come
+from, so values are never mistaken for live ones.
 
-Applies your reference file, then downloads daily prices for every instrument. It
-warns if Yahoo's price on your first buy date is far from what you actually paid,
-which usually means a wrong ticker or a price quoted in pence.
+For example, the total value of all accounts over time:
 
-Both market data scripts cache what they download in `data/raw/`. Add `--offline`
-to rebuild the tables from the cache without downloading anything.
+```sql
+SELECT date, SUM(value_eur) AS value_eur
+FROM daily_valuation
+GROUP BY date
+ORDER BY date;
+```
 
 ## Tests
 
@@ -165,11 +188,10 @@ Arca does what I need it to do. Some things are deliberately simple:
 - **Asset types:** Trading 212 and Lightyear exports don't include them, so they come
   from the reference file.
 - **Lightyear deposit fees** are not recorded.
-- **Market data is updated separately** from the imports, by running the two scripts
-  above.
 - **Prices come from Yahoo Finance** through the unofficial `yfinance` library,
   which can break if Yahoo changes something. The cached files keep earlier
   downloads usable.
+- **Daily closing prices only:** Values are as of the last close, not live.
 
 ## Documentation
 
